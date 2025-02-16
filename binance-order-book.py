@@ -82,7 +82,7 @@ def main():
         "--sort-by",
         choices=["price", "quantity"],
         default="quantity",
-        help="Sort results by 'price' or 'quantity' (default: price)."
+        help="Sort results by 'price' or 'quantity' (default: quantity)."
     )
     parser.add_argument(
         "--sort-dir",
@@ -125,13 +125,20 @@ def main():
     else:  # args.sort_by == "price"
         sort_key = lambda x: x[0]
 
-    # Opposite sort directions for bids/asks
-    if args.sort_dir == "desc":
-        bids_sorted = sorted(bids_agg.items(), key=sort_key, reverse=True)
-        asks_sorted = sorted(asks_agg.items(), key=sort_key, reverse=False)
-    else:  # args.sort_dir == "asc"
-        bids_sorted = sorted(bids_agg.items(), key=sort_key, reverse=False)
-        asks_sorted = sorted(asks_agg.items(), key=sort_key, reverse=True)
+    # If sorting by quantity, use the same order for both bids and asks.
+    if args.sort_by == "quantity":
+        reverse_order = args.sort_dir == "desc"
+        bids_sorted = sorted(bids_agg.items(), key=sort_key, reverse=reverse_order)
+        asks_sorted = sorted(asks_agg.items(), key=sort_key, reverse=reverse_order)
+    else:
+        # For price sorting, use opposite sort directions:
+        # bids descending (for higher bid prices first) and asks ascending (for lower ask prices first)
+        if args.sort_dir == "desc":
+            bids_sorted = sorted(bids_agg.items(), key=sort_key, reverse=True)
+            asks_sorted = sorted(asks_agg.items(), key=sort_key, reverse=False)
+        else:
+            bids_sorted = sorted(bids_agg.items(), key=sort_key, reverse=False)
+            asks_sorted = sorted(asks_agg.items(), key=sort_key, reverse=True)
 
     # Print header with smaller widths
     print(f"### Bids (symbol={args.symbol}, group_size={args.group_size}, "
