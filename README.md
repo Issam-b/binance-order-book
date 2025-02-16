@@ -23,3 +23,7 @@ Then you can run the script using:
 - Sorting by price or quantity
 - Sorting direction
 - Precision or price group size
+
+## Demonstration
+
+![Binance order book](binance-order-book.webp)
