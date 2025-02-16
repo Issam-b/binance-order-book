@@ -21,14 +21,11 @@ def parse_group_size(gs_str: str) -> (float, int):
       "0.0010"  -> (0.001, 3)
     """
     val = float(gs_str)
-
-    # Strip trailing zeros and '.' to detect how many decimals remain
     s = gs_str.rstrip('0').rstrip('.')
     if '.' in s:
         decimals_count = len(s.split('.')[1])
     else:
         decimals_count = 0
-
     return val, decimals_count
 
 def group_price(price_str, group_size_float):
@@ -52,12 +49,64 @@ def format_quantity(q):
     elif q >= 1_000:
         return f"{q/1_000:.2f}k"
     else:
-        # Show up to 2 decimals, strip trailing zeros
         return f"{q:.2f}".rstrip("0").rstrip(".")
+
+def print_side_by_side(title, sorted_by_price, sorted_by_qty, group_size_decimals):
+    """
+    Print two tables side by side:
+      Left table: Sorted by price.
+      Right table: Sorted by quantity.
+    """
+    # Define column widths.
+    col_width_price = 8
+    col_width_qty = 10
+    inner_sep = "    "  # 4 spaces between Price and Quantity in each table
+    # Total width for one table (Price + inner_sep + Quantity)
+    col_total = col_width_price + len(inner_sep) + col_width_qty
+    # Define a separator between the two tables.
+    table_sep = "    |    "  # 4 spaces on each side of the vertical bar
+
+    # Print header lines.
+    print(title)
+    print(f"{'Sort by price':<{col_total}}{table_sep}{'Sort by quantity':<{col_total}}")
+    print(f"{'Price':>{col_width_price}}{inner_sep}{'Quantity':>{col_width_qty}}"
+          f"{table_sep}"
+          f"{'Price':>{col_width_price}}{inner_sep}{'Quantity':>{col_width_qty}}")
+
+    # Determine how many rows to print.
+    n = max(len(sorted_by_price), len(sorted_by_qty))
+    for i in range(n):
+        # Left table: Sorted by price.
+        if i < len(sorted_by_price):
+            price_left, qty_left = sorted_by_price[i]
+            if group_size_decimals > 0:
+                price_str_left = f"{price_left:.{group_size_decimals}f}"
+            else:
+                price_str_left = f"{int(price_left)}"
+            qty_str_left = format_quantity(qty_left)
+            left_line = f"{price_str_left:>{col_width_price}}{inner_sep}{qty_str_left:>{col_width_qty}}"
+        else:
+            left_line = " " * col_total
+
+        # Right table: Sorted by quantity.
+        if i < len(sorted_by_qty):
+            price_right, qty_right = sorted_by_qty[i]
+            if group_size_decimals > 0:
+                price_str_right = f"{price_right:.{group_size_decimals}f}"
+            else:
+                price_str_right = f"{int(price_right)}"
+            qty_str_right = format_quantity(qty_right)
+            right_line = f"{price_str_right:>{col_width_price}}{inner_sep}{qty_str_right:>{col_width_qty}}"
+        else:
+            right_line = ""
+
+        print(f"{left_line}{table_sep}{right_line}")
+    print()  # Blank line after the table
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Fetch and aggregate Binance order book data by decimal bucket size."
+        description="Fetch and aggregate Binance order book data by decimal bucket size, "
+                    "and display two orderings side by side: sorted by price and sorted by quantity."
     )
     parser.add_argument(
         "--symbol",
@@ -71,35 +120,26 @@ def main():
         default=1000,
         help="Number of order book levels to fetch (default: 1000)."
     )
-    # We'll parse as string to determine decimal precision
+    # Parse group-size as a string to capture its formatting.
     parser.add_argument(
         "--group-size",
         type=str,
         default="1",
         help="Decimal bucket size for prices (default: 1). E.g., '0.1', '1', '2.5'."
     )
-    parser.add_argument(
-        "--sort-by",
-        choices=["price", "quantity"],
-        default="quantity",
-        help="Sort results by 'price' or 'quantity' (default: quantity)."
-    )
+    # The sort direction will affect the quantity-sorted table.
     parser.add_argument(
         "--sort-dir",
         choices=["asc", "desc"],
         default="desc",
-        help="Sort direction (default: desc)."
+        help="Sort direction for the quantity column (default: desc)."
     )
 
     args = parser.parse_args()
-
     group_size_float, group_size_decimals = parse_group_size(args.group_size)
 
     endpoint = "https://api.binance.com/api/v3/depth"
-    params = {
-        "symbol": args.symbol.upper(),
-        "limit": args.limit
-    }
+    params = {"symbol": args.symbol.upper(), "limit": args.limit}
 
     try:
         resp = requests.get(endpoint, params=params)
@@ -109,6 +149,7 @@ def main():
         print(f"Error fetching data from Binance: {e}")
         sys.exit(1)
 
+    # Aggregate bids and asks into price buckets.
     bids_agg = defaultdict(float)
     for price_str, qty_str, *_ in data.get("bids", []):
         bucket = group_price(price_str, group_size_float)
@@ -119,52 +160,25 @@ def main():
         bucket = group_price(price_str, group_size_float)
         asks_agg[bucket] += float(qty_str)
 
-    # Determine sorting key
-    if args.sort_by == "quantity":
-        sort_key = lambda x: x[1]
-    else:  # args.sort_by == "price"
-        sort_key = lambda x: x[0]
+    # Create two orderings for each side.
+    # For bids: price ordering is descending (highest price first).
+    bids_by_price = sorted(bids_agg.items(), key=lambda x: x[0], reverse=True)
+    bids_by_qty = sorted(bids_agg.items(), key=lambda x: x[1], reverse=(args.sort_dir == "desc"))
 
-    # If sorting by quantity, use the same order for both bids and asks.
-    if args.sort_by == "quantity":
-        reverse_order = args.sort_dir == "desc"
-        bids_sorted = sorted(bids_agg.items(), key=sort_key, reverse=reverse_order)
-        asks_sorted = sorted(asks_agg.items(), key=sort_key, reverse=reverse_order)
-    else:
-        # For price sorting, use opposite sort directions:
-        # bids descending (for higher bid prices first) and asks ascending (for lower ask prices first)
-        if args.sort_dir == "desc":
-            bids_sorted = sorted(bids_agg.items(), key=sort_key, reverse=True)
-            asks_sorted = sorted(asks_agg.items(), key=sort_key, reverse=False)
-        else:
-            bids_sorted = sorted(bids_agg.items(), key=sort_key, reverse=False)
-            asks_sorted = sorted(asks_agg.items(), key=sort_key, reverse=True)
+    # For asks: price ordering is ascending (lowest ask first).
+    asks_by_price = sorted(asks_agg.items(), key=lambda x: x[0], reverse=False)
+    asks_by_qty = sorted(asks_agg.items(), key=lambda x: x[1], reverse=(args.sort_dir == "desc"))
 
-    # Print header with smaller widths
-    print(f"### Bids (symbol={args.symbol}, group_size={args.group_size}, "
-          f"sort_by={args.sort_by}, sort_dir={args.sort_dir}):")
-    print(f"{'Price':>8}  {'Quantity':>10}")
+    # Print Bids.
+    header_bids = (f"### Bids (symbol={args.symbol.upper()}, group_size={args.group_size}, "
+                   f"price sort: bids descending, quantity sort: {args.sort_dir}):")
+    # Note: first column is sorted by price, second by quantity.
+    print_side_by_side(header_bids, bids_by_price, bids_by_qty, group_size_decimals)
 
-    for price_bucket, qty_sum in bids_sorted:
-        # If group_size_decimals > 0, format that many decimals; else integer
-        if group_size_decimals > 0:
-            price_str = f"{price_bucket:.{group_size_decimals}f}"
-        else:
-            price_str = f"{int(price_bucket)}"
-        qty_str = format_quantity(qty_sum)
-        print(f"{price_str:>8}  {qty_str:>10}")
-
-    print(f"\n### Asks (symbol={args.symbol}, group_size={args.group_size}, "
-          f"sort_by={args.sort_by}, sort_dir={args.sort_dir}):")
-    print(f"{'Price':>8}  {'Quantity':>10}")
-
-    for price_bucket, qty_sum in asks_sorted:
-        if group_size_decimals > 0:
-            price_str = f"{price_bucket:.{group_size_decimals}f}"
-        else:
-            price_str = f"{int(price_bucket)}"
-        qty_str = format_quantity(qty_sum)
-        print(f"{price_str:>8}  {qty_str:>10}")
+    # Print Asks.
+    header_asks = (f"### Asks (symbol={args.symbol.upper()}, group_size={args.group_size}, "
+                   f"price sort: asks ascending, quantity sort: {args.sort_dir}):")
+    print_side_by_side(header_asks, asks_by_price, asks_by_qty, group_size_decimals)
 
 if __name__ == "__main__":
     main()
